@@ -21,6 +21,20 @@
                 android:resource="@xml/recognition_service" />
         </service>
 
+        <!-- On-device (offline) recognizer. Same APIs as the cloud one above;
+             pick which TT9 uses via the voice_recognition_service setting. -->
+        <service
+            android:name=".LocalRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.RECORD_AUDIO">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
+
     </application>
 
 </manifest>

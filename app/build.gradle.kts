@@ -14,10 +14,38 @@ android {
         applicationId = "com.offlineinc.voicetotext"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // The TCL Flip 2 is a 32-bit ARM phone; only build for its chip.
+        ndk {
+            abiFilters += listOf("armeabi-v7a")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                // Force the native engine to compile optimized even in debug
+                // builds — whisper is unusably slow otherwise — and turn on
+                // ARM NEON vectorization for this 32-bit chip.
+                arguments += "-DCMAKE_BUILD_TYPE=Release"
+                arguments += "-DANDROID_ARM_NEON=ON"
+            }
+        }
+    }
+
+    // Native whisper.cpp build (see src/main/cpp/CMakeLists.txt).
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    // Don't compress the model file in the APK (we copy it out as-is).
+    androidResources {
+        noCompress += "bin"
     }
 
     buildTypes {
