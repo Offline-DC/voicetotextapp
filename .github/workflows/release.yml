@@ -1,0 +1,95 @@
+# Stable release workflow — the production counterpart to beta-release.yml.
+# Push a stable tag like `v1.1` (NO -beta/-rc/-alpha suffix) and this builds +
+# signs the APK and publishes it as a normal (non-prerelease) GitHub Release,
+# which the launcher's STABLE channel delivers to all phones. Same signing
+# secrets as the beta workflow and the other Offline-DC apps.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'          # all version tags...
+      - '!v*-*'       # ...except prerelease tags (those go to beta-release.yml)
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release + upload the APK
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Verify tag is NOT a prerelease
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" == *-* ]]; then
+            echo "::error::Tag $TAG has a '-' suffix; prerelease tags belong to beta-release.yml."
+            exit 1
+          fi
+          echo "Building stable release for tag: $TAG"
+
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > "${{ github.workspace }}/keystore.jks"
+
+      - name: Build signed release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease
+
+      - name: Locate and rename APK
+        id: apk
+        run: |
+          SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          if [ -z "$SRC" ]; then
+            echo "::error::No APK found under app/build/outputs/apk/release"
+            exit 1
+          fi
+          cp "$SRC" "${{ github.workspace }}/voicetotext.apk"
+          echo "sha256=$(sha256sum "${{ github.workspace }}/voicetotext.apk" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Parse version code
+        id: version
+        run: |
+          echo "code=$(grep 'versionCode' app/build.gradle.kts | grep -oP '\d+' | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify signature
+        run: |
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BT/apksigner" verify --verbose "${{ github.workspace }}/voicetotext.apk"
+
+      - name: Create GitHub Release (stable)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: false
+          body: |
+            version_code=${{ steps.version.outputs.code }}
+            sha256=${{ steps.apk.outputs.sha256 }}
+
+            On-device voice-to-text (stable).
+          files: voicetotext.apk
+
+      - name: Clean up keystore
+        if: always()
+        run: rm -f "${{ github.workspace }}/keystore.jks"
