@@ -11,7 +11,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.offlineinc.voicetotext"
+        applicationId = "cqwsaom.offlineinc.voicetotext"
         minSdk = 24
         targetSdk = 36
         versionCode = 2

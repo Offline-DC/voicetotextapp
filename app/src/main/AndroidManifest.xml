@@ -2,27 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
         android:label="Voice to Text"
         android:supportsRtl="true">
 
-        <service
-            android:name=".RemoteRecognitionService"
-            android:exported="true"
-            android:permission="android.permission.RECORD_AUDIO">
-            <intent-filter>
-                <action android:name="android.speech.RecognitionService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.speech"
-                android:resource="@xml/recognition_service" />
-        </service>
-
-        <!-- On-device (offline) recognizer. Same APIs as the cloud one above;
-             pick which TT9 uses via the voice_recognition_service setting. -->
+        <!-- On-device offline recognizer. TT9 uses it when it's set as the
+             device's voice_recognition_service. -->
         <service
             android:name=".LocalRecognitionService"
             android:exported="true"
