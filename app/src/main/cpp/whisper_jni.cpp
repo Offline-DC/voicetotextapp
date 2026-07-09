@@ -52,7 +52,12 @@ Java_com_offlineinc_voicetotext_WhisperContext_nativeTranscribe(
     params.n_threads        = nThreads > 0 ? nThreads : 4;
     params.no_context       = true;
     params.single_segment   = true;   // voice input is short -> one segment, faster
-    params.temperature_inc  = 0.0f;   // no slow fallback retries
+    // Temperature fallback stays OFF (single greedy pass). It's whisper's "proper"
+    // fix for repetition loops, but on this slow 32-bit phone it re-decodes the clip
+    // at up to 6 rising temperatures and turned a ~1-2s transcription into ~19s —
+    // unusable. Loops are instead cleaned up cheaply after the fact in
+    // LocalRecognitionService.collapseRepeats().
+    params.temperature_inc  = 0.0f;
     // Scale the encoder window to the ACTUAL clip length (50 ctx units/sec of
     // 16 kHz audio) so we never encode silent padding. Biggest speed lever.
     int dyn_ctx = (int)((double)n / 16000.0 * 50.0) + 32;

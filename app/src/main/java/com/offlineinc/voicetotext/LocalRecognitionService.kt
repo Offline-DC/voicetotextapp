@@ -110,7 +110,10 @@ class LocalRecognitionService : RecognitionService() {
                 val whisper = getWhisper(this)
                 val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
                 val t0 = System.currentTimeMillis()
-                val text = whisper.transcribe(floats, threads).trim()
+                // Fast single-pass transcription (unchanged from the original), then
+                // collapse any degenerate repetition loop in the result. Cheap string
+                // work — no extra model passes, so no slowdown on this phone.
+                val text = collapseRepeats(whisper.transcribe(floats, threads).trim())
                 val ms = System.currentTimeMillis() - t0
                 Log.d(TAG, "on-device transcribe ${ms}ms | ${total / sampleRate}s audio | text: '$text'")
                 val results = Bundle()
@@ -123,6 +126,73 @@ class LocalRecognitionService : RecognitionService() {
                 safeError(callback, SpeechRecognizer.ERROR_CLIENT)
             }
         }
+    }
+
+    /**
+     * Collapse a degenerate repetition loop in whisper's output back to a single
+     * copy. On this slow phone we can't afford whisper's own multi-pass loop
+     * fallback, so we clean it up after the fact instead.
+     *
+     * Whisper loops all take the same shape: a word or phrase (the "unit") repeated,
+     * sometimes with the last repeat cut short by the token cap. So we find the
+     * smallest unit the whole output is built from ("Let's meet up… Let's meet up…"
+     * -> the sentence; "Great. See you later. Great. See you" -> "Great. See you
+     * later."; "duplicate duplicate…" -> "duplicate") and keep one copy of it.
+     *
+     * Deliberately conservative so it never mangles normal speech:
+     *  - a single word repeated must appear 4+ times (so "no no", "bye bye",
+     *    "no no no" are left alone),
+     *  - a multi-word phrase collapses on a full double, OR one full copy plus a
+     *    2+ word partial restart.
+     * A lone one-word tail (e.g. "no problem, no") is intentionally NOT collapsed —
+     * it's textually identical to real speech like "you know I like you", so there's
+     * no safe way to tell them apart. Pure string work; no extra model passes.
+     */
+    private fun collapseRepeats(text: String): String {
+        val words = text.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val n = words.size
+        if (n < 2) return text
+        fun norm(w: String) = w.lowercase().trimEnd('.', ',', '!', '?', ';', ':')
+
+        // Smallest period p: the shortest unit such that the whole output is that
+        // unit repeated (a final partial repeat is allowed). p == n means no repeat.
+        var p = n
+        for (cand in 1 until n) {
+            var periodic = true
+            for (i in cand until n) {
+                if (norm(words[i]) != norm(words[i - cand])) { periodic = false; break }
+            }
+            if (periodic) { p = cand; break }
+        }
+
+        if (p < n) {
+            val fullCopies = n / p
+            val partial = n % p
+            val looksLikeLoop = when {
+                p == 1 -> fullCopies >= 4      // "no no" / "bye bye" survive; long runs don't
+                fullCopies >= 2 -> true        // a full double (or more) of a phrase
+                else -> partial >= 2           // one copy + a 2+ word restart stub
+            }
+            if (looksLikeLoop) return words.subList(0, p).joinToString(" ")
+        }
+
+        // Drifted/degenerate loop: not cleanly periodic (the repeated phrase mutates,
+        // e.g. "Do click it. So do click it. So do do click it…"), but a long output
+        // built from very few distinct words. We can't recover the real speech — the
+        // clip was mis-recognized — but we can stop the wall of text by keeping just
+        // the first sentence, so worst case you get a short wrong result to retry, not
+        // a paragraph. Guarded tightly (long + highly repetitive) so normal speech,
+        // which has far more variety, is never affected.
+        if (n >= 10) {
+            val distinct = words.map { norm(it) }.toHashSet().size
+            if (distinct.toFloat() / n <= 0.3f) {
+                val end = words.indexOfFirst { it.endsWith(".") || it.endsWith("!") || it.endsWith("?") }
+                val cut = if (end in 0..5) end + 1 else minOf(6, n)
+                return words.subList(0, cut).joinToString(" ")
+            }
+        }
+
+        return text
     }
 
     private fun safeError(callback: Callback, code: Int) {
